@@ -28,6 +28,7 @@ var (
 var contractAbi []byte
 
 func main() {
+	// load environment variables
 	if err := godotenv.Load(); err != nil {
 		log.Fatalf("failed to load config: %v", err)
 	}
