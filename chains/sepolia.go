@@ -2,30 +2,42 @@ package chains
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"math/big"
 	"strings"
 
-	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/event"
 
-	"github.com/sljivkov/dectak/contract"
-	"github.com/sljivkov/dectak/pricefeed"
+	"github.com/sljivkov/dectek/contract"
+	"github.com/sljivkov/dectek/pricefeed"
 )
+
+// ContractInterface defines the interface needed for price feed operations.
+type ContractInterface interface {
+	WatchPriceChanged(opts *bind.WatchOpts, sink chan<- *contract.ContractPriceChanged) (event.Subscription, error)
+	Set(opts *bind.TransactOpts, symbol string, price *big.Int) (*types.Transaction, error)
+	Get(opts *bind.CallOpts, symbol string) (*big.Int, error)
+}
+
+// ChainlinkPricer allows mocking getChainlinkPrice.
+type ChainlinkPricer interface {
+	getChainlinkPrice(symbol string) (int64, error)
+}
 
 type SepoliaPriceFeed struct {
 	client          *ethclient.Client
-	contract        *contract.Contract
+	contract        ContractInterface
 	auth            *bind.TransactOpts
 	contractAddress common.Address
 	onChainPrices   map[string]float64
+	chainlinkPricer ChainlinkPricer
 }
-
-// Minimal ABI for Chainlink AggregatorV3Interface
-const chainlinkABI = `[{"inputs":[],"name":"latestRoundData","outputs":[{"internalType":"uint80","name":"roundId","type":"uint80"},{"internalType":"int256","name":"answer","type":"int256"},{"internalType":"uint256","name":"startedAt","type":"uint256"},{"internalType":"uint256","name":"updatedAt","type":"uint256"},{"internalType":"uint80","name":"answeredInRound","type":"uint80"}],"stateMutability":"view","type":"function"}]`
 
 func NewSepoliaPriceFeed(privateKey string, rpcURL string, contractAddress string) (*SepoliaPriceFeed, error) {
 	client, err := ethclient.Dial(rpcURL)
@@ -49,22 +61,26 @@ func NewSepoliaPriceFeed(privateKey string, rpcURL string, contractAddress strin
 	}
 
 	addr := common.HexToAddress(contractAddress)
+
 	contract, err := contract.NewContract(addr, client)
 	if err != nil {
 		return nil, err
 	}
 
-	return &SepoliaPriceFeed{
+	feed := &SepoliaPriceFeed{
 		client:          client,
 		contract:        contract,
 		auth:            auth,
 		contractAddress: addr,
 		onChainPrices:   make(map[string]float64),
-	}, nil
+	}
+	// chainlinkPricer will be set by the caller
+	return feed, nil
 }
 
 func (s *SepoliaPriceFeed) ListenOnChainPriceUpdate(ctx context.Context, out chan<- pricefeed.Price) {
 	logs := make(chan *contract.ContractPriceChanged)
+
 	sub, err := s.contract.WatchPriceChanged(&bind.WatchOpts{
 		Context: ctx,
 	}, logs)
@@ -75,12 +91,15 @@ func (s *SepoliaPriceFeed) ListenOnChainPriceUpdate(ctx context.Context, out cha
 	log.Println("📡 Listening for PriceChanged events...")
 
 	go func() {
-		defer close(out) // Optional: close the output channel when done
+		defer sub.Unsubscribe() // Always cleanup subscription
+
+		defer close(out) // Always close output channel when done
 
 		for {
 			select {
 			case err := <-sub.Err():
 				log.Printf("🔴 Subscription error: %v", err)
+
 				return
 			case event := <-logs:
 				log.Printf("🔥 Event:\n  Symbol: %s\n  Price: %d\n  Timestamp: %d\n",
@@ -91,29 +110,67 @@ func (s *SepoliaPriceFeed) ListenOnChainPriceUpdate(ctx context.Context, out cha
 				).Float64()
 
 				s.onChainPrices[event.Symbol] = priceFloat
-				// Send the result to the output channel
+
 				out <- pricefeed.Price{
 					Symbol: event.Symbol,
 					USD:    priceFloat,
 				}
 			case <-ctx.Done():
-				log.Println("🛑 Context cancelled, stopping listener")
-				sub.Unsubscribe()
+				log.Println("🛑 Context canceled, stopping listener")
+
 				return
 			}
 		}
 	}()
 }
 
-func (s *SepoliaPriceFeed) updatePriceOnChain(_ context.Context, symbol string, price *big.Int) error {
-	_, err := s.contract.Set(s.auth, symbol, price)
+func (s *SepoliaPriceFeed) validatePrice(symbol string, newPrice int64) (bool, error) {
+	chainlinkPrice, err := s.chainlinkPricer.getChainlinkPrice(symbol)
 	if err != nil {
-		log.Println(err)
-		return err
+		return false, fmt.Errorf("chainlink fetch failed for %s: %w", symbol, err)
 	}
 
-	return nil
+	contractPrice := int64(s.onChainPrices[symbol] * 100)
+	chainlinkScaled := chainlinkPrice * 100
 
+	// If no contract price exists, only check chainlink bounds
+	if contractPrice == 0 {
+		chainUp := int64(float64(chainlinkScaled) * 1.2)   // 20% up
+		chainDown := int64(float64(chainlinkScaled) * 0.8) // 20% down
+
+		return newPrice >= chainDown && newPrice <= chainUp, nil
+	}
+
+	// First check if price is within 2% of contract price
+	contractUp := int64(float64(contractPrice) * 1.02)   // 2% up
+	contractDown := int64(float64(contractPrice) * 0.98) // 2% down
+	withinContractBounds := newPrice >= contractDown && newPrice <= contractUp
+
+	// If price is within 2% bounds, don't write (avoid unnecessary updates)
+	if withinContractBounds {
+		return false, nil
+	}
+
+	// If price is outside contract bounds, verify it's within chainlink bounds
+	chainUp := int64(float64(chainlinkScaled) * 1.2)   // 20% up
+	chainDown := int64(float64(chainlinkScaled) * 0.8) // 20% down
+	withinChainlinkBounds := newPrice >= chainDown && newPrice <= chainUp
+
+	return withinChainlinkBounds, nil
+}
+
+func (s *SepoliaPriceFeed) writeToChain(_ context.Context, symbol string, price float64) error {
+	newPrice := big.NewInt(int64(price * 100))
+
+	_, err := s.contract.Set(s.auth, symbol, newPrice)
+	if err != nil {
+		return fmt.Errorf("failed to write %s price: %w", symbol, err)
+	}
+
+	// Update cache after successful write
+	s.onChainPrices[symbol] = price
+
+	return nil
 }
 
 func (s *SepoliaPriceFeed) WritePricesToChain(ctx context.Context, in <-chan []pricefeed.Price) {
@@ -121,84 +178,47 @@ func (s *SepoliaPriceFeed) WritePricesToChain(ctx context.Context, in <-chan []p
 		select {
 		case prices := <-in:
 			log.Printf("📨 Incoming prices to chain writer: %+v\n", prices)
-			for _, p := range prices {
-				// Convert price to on-chain representation (e.g. scaled by 100)
-				scaled := new(big.Int).Mul(
-					big.NewInt(int64(p.USD*100)),
-					big.NewInt(1),
-				)
 
-				log.Printf("📝 Writing %s: %.2f (scaled: %s) to chain\n", p.Symbol, p.USD, scaled.String())
-				err := s.updatePriceOnChain(ctx, p.Symbol, scaled)
+			// First validate all prices
+			validPrices := make([]pricefeed.Price, 0)
 
+			for _, price := range prices {
+				symbol := strings.ToLower(price.Symbol)
+
+				newPrice := int64(price.USD * 100)
+
+				shouldWrite, err := s.validatePrice(symbol, newPrice)
 				if err != nil {
+					log.Printf("⚠️ %v", err)
 
+					continue
+				}
+
+				if shouldWrite {
+					log.Printf("✅ Price validated for %s: %.2f", symbol, price.USD)
+
+					validPrices = append(validPrices, price)
+				} else {
+					log.Printf("⛔ %s price invalid for write: %.2f", symbol, price.USD)
 				}
 			}
+
+			// Then write valid prices
+			for _, price := range validPrices {
+				symbol := strings.ToLower(price.Symbol)
+				if err := s.writeToChain(ctx, symbol, price.USD); err != nil {
+					log.Printf("❌ %v", err)
+
+					continue
+				}
+
+				log.Printf("📝 Successfully wrote %s price: %.2f", symbol, price.USD)
+			}
+
 		case <-ctx.Done():
 			log.Println("⛔ Price writing stopped due to context cancellation")
+
 			return
-		}
-	}
-}
-
-func (s *SepoliaPriceFeed) GetChainlinkPrice(symbol string) (int64, error) {
-	addresses := map[string]string{
-		"bitcoin":  "0xA39434A63A52E749F02807ae27335515BA4b07F7",
-		"ethereum": "0xD4a33860578De61DBAbDc8BFdb98FD742fA7028e",
-	}
-
-	addr := common.HexToAddress(addresses[symbol])
-	parsedABI, err := abi.JSON(strings.NewReader(chainlinkABI))
-	if err != nil {
-		return 0, err
-	}
-
-	contract := bind.NewBoundContract(addr, parsedABI, s.client, s.client, s.client)
-
-	var out []interface{}
-	err = contract.Call(nil, &out, "latestRoundData")
-	if err != nil {
-		return 0, err
-	}
-
-	answer := out[1].(*big.Int)
-	price := new(big.Int).Div(answer, big.NewInt(1e6)).Int64()
-
-	log.Printf("🔗 Chainlink %s: %d", symbol, price)
-	return price, nil
-}
-
-func (s *SepoliaPriceFeed) ValidateAndWrite(ctx context.Context, prices []pricefeed.Price) {
-	for _, p := range prices {
-		symbol := strings.ToLower(p.Symbol)
-		newPrice := int64(p.USD * 100)
-
-		chainlinkPrice, err := s.GetChainlinkPrice(symbol)
-		if err != nil {
-			log.Printf("⚠️ Chainlink fetch failed for %s: %v", symbol, err)
-			continue
-		}
-
-		contractPrice := int64(s.onChainPrices[symbol] * 100)
-
-		contractUp := int64(float64(contractPrice) * 1.02)
-		contractDown := int64(float64(contractPrice) * 0.98)
-		chainUp := int64(float64(chainlinkPrice) * 1.2)
-		chainDown := int64(float64(chainlinkPrice) * 0.8)
-
-		if (newPrice <= contractDown || newPrice >= contractUp || contractPrice == 0) &&
-			(newPrice >= chainDown && newPrice <= chainUp) {
-
-			log.Printf("✅ Writing %s to chain: %d", symbol, newPrice)
-			// TODO: handle error reverting
-			s.updatePriceOnChain(ctx, p.Symbol, big.NewInt(newPrice))
-
-			// ✅ Update cache after successful write
-			s.onChainPrices[symbol] = float64(newPrice) / 100
-
-		} else {
-			log.Printf("⛔ %s not valid for write. Skipped.", symbol)
 		}
 	}
 }
