@@ -24,7 +24,7 @@ jobs:
           cache: true
       
       - name: Install golangci-lint
-        uses: golangci/golangci-lint-action@latest
+        uses: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
         with:
           version: latest
       
