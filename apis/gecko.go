@@ -28,11 +28,18 @@ type CurrencyPrice struct {
 
 // NewCoinGecko creates a new CoinGecko price feed instance
 func NewCoinGecko(cfg config.Config) *CoinGecko {
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+	}
+
 	return &CoinGecko{
 		cfg:       cfg,
 		apiPrices: make(map[string]float64),
 		client: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout:   10 * time.Second,
+			Transport: transport,
 		},
 	}
 }
@@ -52,11 +59,15 @@ func (g *CoinGecko) getPrices() ([]pricefeed.Price, error) {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
+	// Add compression and caching headers
+	req.Header.Set("Accept-Encoding", "gzip, deflate")
+	req.Header.Set("Cache-Control", "max-age=30") // Allow 30s cache
+	req.Header.Set("Accept", "application/json")
+
 	resp, err := g.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch prices: %w", err)
 	}
-
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {

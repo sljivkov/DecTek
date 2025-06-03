@@ -24,6 +24,14 @@ func TestNewCoinGecko(t *testing.T) {
 	assert.NotNil(t, gecko)
 	assert.Equal(t, cfg, gecko.cfg)
 	assert.NotNil(t, gecko.apiPrices)
+
+	// Test HTTP client configuration
+	transport, ok := gecko.client.Transport.(*http.Transport)
+	assert.True(t, ok, "Expected *http.Transport")
+	assert.Equal(t, 100, transport.MaxIdleConns)
+	assert.Equal(t, 100, transport.MaxIdleConnsPerHost)
+	assert.Equal(t, 90*time.Second, transport.IdleConnTimeout)
+	assert.Equal(t, 10*time.Second, gecko.client.Timeout)
 }
 
 func TestGetPrices(t *testing.T) {

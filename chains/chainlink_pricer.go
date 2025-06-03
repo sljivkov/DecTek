@@ -2,6 +2,7 @@
 package chains
 
 import (
+	_ "embed"
 	"fmt"
 	"log"
 	"math/big"
@@ -13,39 +14,50 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
+//go:embed abi/chainlink.abi
+var chainlinkABI string
+
 // RealChainlinkPricer implements ChainlinkPricer interface using real Chainlink price feeds
 type RealChainlinkPricer struct {
-	client *ethclient.Client
+	client    *ethclient.Client
+	parsedABI abi.ABI
+	addresses map[string]string
 }
 
 // NewRealChainlinkPricer creates a new instance of RealChainlinkPricer
-func NewRealChainlinkPricer(client *ethclient.Client) *RealChainlinkPricer {
-	return &RealChainlinkPricer{client: client}
-}
+func NewRealChainlinkPricer(client *ethclient.Client) (*RealChainlinkPricer, error) {
+	parsedABI, err := abi.JSON(strings.NewReader(chainlinkABI))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse Chainlink ABI: %w", err)
+	}
 
-//nolint:lll
-const chainlinkABI = `[{"inputs":[],"name":"latestRoundData","outputs":[{"internalType":"uint80","name":"roundId","type":"uint80"},{"internalType":"int256","name":"answer","type":"int256"},{"internalType":"uint256","name":"startedAt","type":"uint256"},{"internalType":"uint256","name":"updatedAt","type":"uint256"},{"internalType":"uint80","name":"answeredInRound","type":"uint80"}],"stateMutability":"view","type":"function"}]`
-
-// getChainlinkPrice fetches the latest price for a given token from Chainlink price feeds
-func (r *RealChainlinkPricer) getChainlinkPrice(symbol string) (int64, error) {
+	// Initialize with default Sepolia addresses
 	addresses := map[string]string{
 		"bitcoin":  "0xA39434A63A52E749F02807ae27335515BA4b07F7",
 		"ethereum": "0xD4a33860578De61DBAbDc8BFdb98FD742fA7028e",
 	}
 
-	addr, ok := addresses[symbol]
+	return &RealChainlinkPricer{
+		client:    client,
+		parsedABI: parsedABI,
+		addresses: addresses,
+	}, nil
+}
+
+// SetAddresses allows updating the Chainlink price feed addresses
+func (r *RealChainlinkPricer) SetAddresses(addresses map[string]string) {
+	r.addresses = addresses
+}
+
+// getChainlinkPrice fetches the latest price for a given token from Chainlink price feeds
+func (r *RealChainlinkPricer) getChainlinkPrice(symbol string) (int64, error) {
+	addr, ok := r.addresses[symbol]
 	if !ok {
 		return 0, fmt.Errorf("no Chainlink price feed available for %s", symbol)
 	}
 
 	contractAddr := common.HexToAddress(addr)
-
-	parsedABI, err := abi.JSON(strings.NewReader(chainlinkABI))
-	if err != nil {
-		return 0, fmt.Errorf("failed to parse Chainlink ABI: %w", err)
-	}
-
-	contract := bind.NewBoundContract(contractAddr, parsedABI, r.client, r.client, r.client)
+	contract := bind.NewBoundContract(contractAddr, r.parsedABI, r.client, r.client, r.client)
 
 	var out []any
 	if err := contract.Call(nil, &out, "latestRoundData"); err != nil {

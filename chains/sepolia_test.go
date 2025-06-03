@@ -168,6 +168,7 @@ func TestValidatePrice(t *testing.T) {
 			"bitcoin": 30000.00,
 		},
 		chainlinkPricer: mockPricer,
+		boundCache:      make(map[string]boundsCacheEntry), // Initialize the cache map
 	}
 
 	tests := []struct {
@@ -301,6 +302,7 @@ func TestWritePricesToChain(t *testing.T) {
 		},
 		auth:            &bind.TransactOpts{},
 		chainlinkPricer: mockPricer,
+		boundCache:      make(map[string]boundsCacheEntry), // Initialize the boundCache map
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

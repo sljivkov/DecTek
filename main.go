@@ -34,17 +34,24 @@ func main() {
 		return
 	}
 
+	// Initialize chainlink pricer
+	chainlinkPricer, err := chains.NewRealChainlinkPricer(sepoliaFeed.Client())
+	if err != nil {
+		log.Fatalf("❌ Failed to initialize Chainlink pricer: %v", err)
+
+		return
+	}
+
+	sepoliaFeed.SetChainlinkPricer(chainlinkPricer)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	geckoFeed := apis.NewCoinGecko(*cfg)
-
-	allFeed := NewAllFeed(geckoFeed, sepoliaFeed)
-
-	// Initialize channels for price data flow
 	var (
-		out     = make(chan pricefeed.Price)
-		priceCh = make(chan []pricefeed.Price)
+		geckoFeed = apis.NewCoinGecko(*cfg)
+		allFeed   = NewAllFeed(geckoFeed, sepoliaFeed)
+		out       = make(chan pricefeed.Price, 100)   // Buffer for on-chain price updates
+		priceCh   = make(chan []pricefeed.Price, 100) // Buffer for API price updates
 	)
 
 	// Start on-chain price listener
