@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/mock"
 
 	"github.com/sljivkov/dectek/contract"
-	"github.com/sljivkov/dectek/pricefeed"
+	"github.com/sljivkov/dectek/domain"
 )
 
 // MockContract implements the ContractInterface for testing
@@ -69,7 +69,7 @@ func TestListenOnChainPriceUpdate(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	out := make(chan pricefeed.Price)
+	out := make(chan domain.Price)
 	errChan := make(chan error)
 
 	// Setup mock expectations
@@ -93,9 +93,7 @@ func TestListenOnChainPriceUpdate(t *testing.T) {
 	select {
 	case price := <-out:
 		assert.Equal(t, "bitcoin", price.Symbol)
-
 		assert.Equal(t, 30000.00, price.USD)
-
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for price update")
 	}
@@ -119,7 +117,7 @@ func TestListenOnChainPriceUpdate_Error(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	out := make(chan pricefeed.Price)
+	out := make(chan domain.Price)
 	errChan := make(chan error, 1)
 
 	// Setup mock expectations
@@ -148,12 +146,12 @@ type MockSepoliaPriceFeed struct {
 	*SepoliaPriceFeed
 }
 
-// MockChainlinkPricer implements ChainlinkPricer for testing
+// MockChainlinkPricer implements pricefeed.ChainlinkPricer for testing
 type MockChainlinkPricer struct {
 	mock.Mock
 }
 
-func (m *MockChainlinkPricer) getChainlinkPrice(symbol string) (int64, error) {
+func (m *MockChainlinkPricer) GetChainlinkPrice(symbol string) (int64, error) {
 	args := m.Called(symbol)
 
 	return args.Get(0).(int64), args.Error(1)
@@ -208,9 +206,9 @@ func TestValidatePrice(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.wantErr {
-				mockPricer.On("getChainlinkPrice", tt.symbol).Return(int64(0), fmt.Errorf("chainlink error")).Once()
+				mockPricer.On("GetChainlinkPrice", tt.symbol).Return(int64(0), fmt.Errorf("chainlink error")).Once()
 			} else {
-				mockPricer.On("getChainlinkPrice", tt.symbol).Return(tt.chainlinkPrice, nil).Once()
+				mockPricer.On("GetChainlinkPrice", tt.symbol).Return(tt.chainlinkPrice, nil).Once()
 			}
 
 			got, err := feed.validatePrice(tt.symbol, tt.price)
@@ -302,7 +300,7 @@ func TestWritePricesToChain(t *testing.T) {
 		},
 		auth:            &bind.TransactOpts{},
 		chainlinkPricer: mockPricer,
-		boundCache:      make(map[string]boundsCacheEntry), // Initialize the boundCache map
+		boundCache:      make(map[string]boundsCacheEntry),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -320,15 +318,15 @@ func TestWritePricesToChain(t *testing.T) {
 	// Set up mock expectations
 	mockContract.On("Set", mock.Anything, "bitcoin", big.NewInt(3100000)). // $31,000.00
 										Return(mockTx, nil)
-	mockPricer.On("getChainlinkPrice", "bitcoin").Return(int64(31000), nil)
+	mockPricer.On("GetChainlinkPrice", "bitcoin").Return(int64(31000), nil)
 
-	in := make(chan []pricefeed.Price, 1)
+	in := make(chan []domain.Price, 1)
 
 	// Start WritePricesToChain in a goroutine
 	go feed.WritePricesToChain(ctx, in)
 
 	// Send test prices
-	testPrices := []pricefeed.Price{
+	testPrices := []domain.Price{
 		{Symbol: "bitcoin", USD: 31000.00}, // Valid price
 	}
 	in <- testPrices

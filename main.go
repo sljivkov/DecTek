@@ -11,7 +11,7 @@ import (
 	"github.com/sljivkov/dectek/apis"
 	"github.com/sljivkov/dectek/chains"
 	"github.com/sljivkov/dectek/config"
-	"github.com/sljivkov/dectek/pricefeed"
+	"github.com/sljivkov/dectek/domain"
 )
 
 // Global state variables for price management
@@ -50,8 +50,8 @@ func main() {
 	var (
 		geckoFeed = apis.NewCoinGecko(*cfg)
 		allFeed   = NewAllFeed(geckoFeed, sepoliaFeed)
-		out       = make(chan pricefeed.Price, 100)   // Buffer for on-chain price updates
-		priceCh   = make(chan []pricefeed.Price, 100) // Buffer for API price updates
+		out       = make(chan domain.Price, 100)   // Buffer for on-chain price updates
+		priceCh   = make(chan []domain.Price, 100) // Buffer for API price updates
 	)
 
 	// Start on-chain price listener

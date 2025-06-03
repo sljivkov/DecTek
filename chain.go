@@ -8,27 +8,27 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sljivkov/dectek/pricefeed"
+	"github.com/sljivkov/dectek/domain"
 )
 
 type AllFeed struct {
-	apiFeed   pricefeed.PriceProvider
-	chainFeed pricefeed.PriceFeed
+	apiFeed   domain.PriceProvider
+	chainFeed domain.PriceFeed
 }
 
-func (af *AllFeed) ListenOnChainPriceUpdate(ctx context.Context, out chan<- pricefeed.Price) {
+func (af *AllFeed) ListenOnChainPriceUpdate(ctx context.Context, out chan<- domain.Price) {
 	af.chainFeed.ListenOnChainPriceUpdate(ctx, out)
 }
 
-func (af *AllFeed) WritePricesToChain(ctx context.Context, in <-chan []pricefeed.Price) {
+func (af *AllFeed) WritePricesToChain(ctx context.Context, in <-chan []domain.Price) {
 	af.chainFeed.WritePricesToChain(ctx, in)
 }
 
-func (af *AllFeed) UpdatePriceFromApi(priceCh chan<- []pricefeed.Price) {
+func (af *AllFeed) UpdatePriceFromApi(priceCh chan<- []domain.Price) {
 	af.apiFeed.UpdatePriceFromApi(priceCh)
 }
 
-func NewAllFeed(apiFeed pricefeed.PriceProvider, chainFeed pricefeed.PriceFeed) *AllFeed {
+func NewAllFeed(apiFeed domain.PriceProvider, chainFeed domain.PriceFeed) *AllFeed {
 	return &AllFeed{
 		apiFeed:   apiFeed,
 		chainFeed: chainFeed,

@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/sljivkov/dectek/config"
-	"github.com/sljivkov/dectek/pricefeed"
+	"github.com/sljivkov/dectek/domain"
 )
 
 func TestNewCoinGecko(t *testing.T) {
@@ -106,7 +106,7 @@ func TestUpdatePriceFromApi(t *testing.T) {
 	}
 
 	gecko := NewCoinGecko(cfg)
-	priceCh := make(chan []pricefeed.Price, 1)
+	priceCh := make(chan []domain.Price, 1)
 
 	// Start UpdatePriceFromApi in a goroutine
 	go func() {

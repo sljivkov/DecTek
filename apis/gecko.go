@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/sljivkov/dectek/config"
-	"github.com/sljivkov/dectek/pricefeed"
+	"github.com/sljivkov/dectek/domain"
 )
 
-// CoinGecko implements a price feed using the CoinGecko API
+// CoinGecko implements domain.PriceProvider interface using the CoinGecko API
 type CoinGecko struct {
 	cfg       config.Config
 	apiPrices map[string]float64
@@ -45,7 +45,7 @@ func NewCoinGecko(cfg config.Config) *CoinGecko {
 }
 
 // getPrices fetches current prices from the CoinGecko API
-func (g *CoinGecko) getPrices() ([]pricefeed.Price, error) {
+func (g *CoinGecko) getPrices() ([]domain.Price, error) {
 	params := url.Values{}
 	params.Add("ids", g.cfg.Tokens)
 	params.Add("vs_currencies", "usd")
@@ -79,11 +79,11 @@ func (g *CoinGecko) getPrices() ([]pricefeed.Price, error) {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	prices := make([]pricefeed.Price, 0, len(raw))
+	prices := make([]domain.Price, 0, len(raw))
 
 	for symbol, data := range raw {
 		g.apiPrices[symbol] = data.USD
-		prices = append(prices, pricefeed.Price{
+		prices = append(prices, domain.Price{
 			Symbol: symbol,
 			USD:    data.USD,
 		})
@@ -98,7 +98,7 @@ func (g *CoinGecko) ApiPrices() map[string]float64 {
 }
 
 // UpdatePriceFromApi continuously updates prices from the CoinGecko API
-func (g *CoinGecko) UpdatePriceFromApi(priceCh chan<- []pricefeed.Price) {
+func (g *CoinGecko) UpdatePriceFromApi(priceCh chan<- []domain.Price) {
 	log.Println("📡 Starting CoinGecko price update service")
 
 	for {

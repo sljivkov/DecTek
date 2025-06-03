@@ -17,7 +17,7 @@ import (
 //go:embed abi/chainlink.abi
 var chainlinkABI string
 
-// RealChainlinkPricer implements ChainlinkPricer interface using real Chainlink price feeds
+// RealChainlinkPricer implements domain.ChainlinkPricer interface using real Chainlink price feeds
 type RealChainlinkPricer struct {
 	client    *ethclient.Client
 	parsedABI abi.ABI
@@ -49,8 +49,8 @@ func (r *RealChainlinkPricer) SetAddresses(addresses map[string]string) {
 	r.addresses = addresses
 }
 
-// getChainlinkPrice fetches the latest price for a given token from Chainlink price feeds
-func (r *RealChainlinkPricer) getChainlinkPrice(symbol string) (int64, error) {
+// GetChainlinkPrice fetches the latest price for a given token from Chainlink price feeds
+func (r *RealChainlinkPricer) GetChainlinkPrice(symbol string) (int64, error) {
 	addr, ok := r.addresses[symbol]
 	if !ok {
 		return 0, fmt.Errorf("no Chainlink price feed available for %s", symbol)
