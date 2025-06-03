@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/sljivkov/dectak/pricefeed"
+	"github.com/sljivkov/dectek/pricefeed"
 )
 
 type AllFeed struct {
@@ -39,11 +39,18 @@ func pricesHandler(w http.ResponseWriter, r *http.Request) {
 	case <-readyCh:
 	case <-time.After(3 * time.Second): // fallback timeout
 		http.Error(w, "prices not ready", http.StatusServiceUnavailable)
+
 		return
 	}
 
 	mu.RLock()
 	defer mu.RUnlock()
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(apiPrices)
+
+	if err := json.NewEncoder(w).Encode(apiPrices); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+
+		return
+	}
 }

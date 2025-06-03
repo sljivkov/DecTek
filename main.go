@@ -1,89 +1,92 @@
+// Package main provides the entry point for the DecTek price feed service
 package main
 
 import (
 	"context"
 	_ "embed"
-	"fmt"
 	"log"
 	"net/http"
 	"sync"
 
-	"github.com/joho/godotenv"
-	"github.com/kelseyhightower/envconfig"
-
-	"github.com/sljivkov/dectak/apis"
-	"github.com/sljivkov/dectak/chains"
-	"github.com/sljivkov/dectak/config"
-	"github.com/sljivkov/dectak/pricefeed"
+	"github.com/sljivkov/dectek/apis"
+	"github.com/sljivkov/dectek/chains"
+	"github.com/sljivkov/dectek/config"
+	"github.com/sljivkov/dectek/pricefeed"
 )
 
+// Global state variables for price management
 var (
 	apiPrices = make(map[string]float64)
 	mu        sync.RWMutex
-	readyCh   = make(chan struct{}) // closed once prices are loaded
-	once      sync.Once
+	readyCh   = make(chan struct{}) // Signals when initial prices are loaded
 )
 
-// embed:go Dectek.abi
-var contractAbi []byte
-
 func main() {
-	// load environment variables
-	if err := godotenv.Load(); err != nil {
-		log.Fatalf("failed to load config: %v", err)
+	cfg, err := config.NewConfig()
+	if err != nil {
+		log.Fatalf("❌ Failed to initialize config: %v", err)
 	}
 
-	var cfg config.Config
-	if err := envconfig.Process("", &cfg); err != nil {
-		log.Fatalf("failed to process cfg: %v", err)
+	sepoliaFeed, err := chains.NewSepoliaPriceFeed(cfg.PrivateKey, cfg.Alchemy, cfg.Contract)
+	if err != nil {
+		log.Fatalf("❌ Failed to initialize Sepolia feed: %v", err)
+
+		return
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	geckoFeed := apis.NewCoinGecko(*cfg)
+
+	allFeed := NewAllFeed(geckoFeed, sepoliaFeed)
+
+	// Initialize channels for price data flow
 	var (
 		out     = make(chan pricefeed.Price)
 		priceCh = make(chan []pricefeed.Price)
 	)
 
-	sepoliaFeed, _ := chains.NewSepoliaPriceFeed(cfg.PrivateKey, cfg.Alchemy, cfg.Contract)
-
-	// change this to api not gecko
-	geckoFeed := apis.NewCoinGecko(cfg)
-
-	allFeed := NewAllFeed(geckoFeed, sepoliaFeed)
-
+	// Start on-chain price listener
 	go allFeed.ListenOnChainPriceUpdate(ctx, out)
 
-	// Listen to processed data
+	// Process on-chain price updates
 	go func() {
 		for data := range out {
 			log.Printf("📥 Received on-chain price update: %s = %.2f", data.Symbol, data.USD)
 		}
 	}()
 
+	// Start API price updater
 	go allFeed.UpdatePriceFromApi(priceCh)
 
+	// Start chain price writer
 	go allFeed.WritePricesToChain(ctx, priceCh)
 
-	// TODO add api calls for reverts and implement revert logic
-
-	// Start web server
-	http.HandleFunc("/prices", pricesHandler)
+	// Start HTTP server
 	go func() {
-		log.Println("Starting server on :8080")
+		log.Println("🚀 Starting server on :8080")
+
 		if err := http.ListenAndServe(":8080", nil); err != nil {
-			log.Fatalf("Server failed: %v", err)
+			log.Fatalf("❌ Server failed: %v", err)
 		}
 	}()
 
-	// Main loop updates shared map
+	// Register HTTP handlers
+	http.HandleFunc("/prices", pricesHandler)
+
+	// Main price update loop
+	log.Println("✨ Starting main price update loop")
+
 	for data := range priceCh {
 		mu.Lock()
+
 		for _, coin := range data {
 			apiPrices[coin.Symbol] = coin.USD
-			fmt.Printf("%s %f \n", coin.Symbol, coin.USD)
+
+			log.Printf("💰 Updated %s price: %.2f", coin.Symbol, coin.USD)
 		}
+
 		mu.Unlock()
 	}
 }
