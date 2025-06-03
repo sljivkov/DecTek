@@ -9,30 +9,106 @@ on:
       - develop  # Keep PR checks for develop branch
 
 jobs:
-  checks:
-    name: Lint, Test and Build
+  setup:
+    name: Setup Go
     runs-on: ubuntu-latest
-    
+    outputs:
+      go-version: ${{ steps.go-version.outputs.version }}
     steps:
+      - name: Set Go version
+        id: go-version
+        run: echo "version=1.23.4" >> $GITHUB_OUTPUT
+
       - name: Checkout code
         uses: actions/checkout@v4
       
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: '1.23.4'
+          go-version: ${{ steps.go-version.outputs.version }}
           cache: true
       
-      - name: Install golangci-lint
-        uses: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+      - name: Cache Go modules
+        uses: actions/cache@v3
         with:
-          version: latest
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+  lint:
+    name: Lint
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ needs.setup.outputs.go-version }}
+          cache: true
+      
+      - name: Restore Go modules cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+      
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
       
       - name: Run golangci-lint
         run: make lint
+
+  test:
+    name: Test
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ needs.setup.outputs.go-version }}
+          cache: true
+      
+      - name: Restore Go modules cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
       
       - name: Run tests
         run: make test
+
+  build:
+    name: Build
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ needs.setup.outputs.go-version }}
+          cache: true
+      
+      - name: Restore Go modules cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
       
       - name: Build
         run: go build -v ./...
