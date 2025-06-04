@@ -7,15 +7,14 @@ import (
 )
 
 func TestNewConfig(t *testing.T) {
-	// Test case 1: Test with environment variables
-	t.Run("with environment variables", func(t *testing.T) {
-		// Set up test environment variables
+	// Test case 1: Test with valid environment variables
+	t.Run("with valid environment variables", func(t *testing.T) {
 		t.Setenv("PRECISION", "2")
 		t.Setenv("TOKENS", "bitcoin,ethereum")
 		t.Setenv("URL", "http://test.com")
-		t.Setenv("ALCHEMY", "test-alchemy")
-		t.Setenv("CONTRACT", "0x123")
-		t.Setenv("PRIVATEKEY", "test-key")
+		t.Setenv("ALCHEMY", "http://alchemy.test")
+		t.Setenv("CONTRACT", "0x123456789012345678901234567890123456789a")
+		t.Setenv("PRIVATEKEY", "1234567890123456789012345678901234567890123456789012345678901234")
 
 		cfg, err := NewConfig()
 		assert.NoError(t, err)
@@ -25,23 +24,94 @@ func TestNewConfig(t *testing.T) {
 		assert.Equal(t, "2", cfg.Precision)
 		assert.Equal(t, "bitcoin,ethereum", cfg.Tokens)
 		assert.Equal(t, "http://test.com", cfg.Url)
-		assert.Equal(t, "test-alchemy", cfg.Alchemy)
-		assert.Equal(t, "0x123", cfg.Contract)
-		assert.Equal(t, "test-key", cfg.PrivateKey)
+		assert.Equal(t, "http://alchemy.test", cfg.Alchemy)
+		assert.Equal(t, "0x123456789012345678901234567890123456789a", cfg.Contract)
+		assert.Equal(t, "1234567890123456789012345678901234567890123456789012345678901234", cfg.PrivateKey)
 	})
 
-	// Test case 2: Test with missing environment variables
-	t.Run("with missing environment variables", func(t *testing.T) {
-		// Set empty environment variables
-		t.Setenv("PRECISION", "")
+	// Test case 2: Test with invalid URL
+	t.Run("with invalid URL", func(t *testing.T) {
+		t.Setenv("PRECISION", "2")
+		t.Setenv("TOKENS", "bitcoin,ethereum")
+		t.Setenv("URL", "invalid-url")
+		t.Setenv("ALCHEMY", "http://alchemy.test")
+		t.Setenv("CONTRACT", "0x123456789012345678901234567890123456789a")
+		t.Setenv("PRIVATEKEY", "1234567890123456789012345678901234567890123456789012345678901234")
+
+		_, err := NewConfig()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid CoinGecko URL")
+	})
+
+	// Test case 3: Test with invalid contract address
+	t.Run("with invalid contract address", func(t *testing.T) {
+		t.Setenv("PRECISION", "2")
+		t.Setenv("TOKENS", "bitcoin,ethereum")
+		t.Setenv("URL", "http://test.com")
+		t.Setenv("ALCHEMY", "http://alchemy.test")
+		t.Setenv("CONTRACT", "invalid-address")
+		t.Setenv("PRIVATEKEY", "1234567890123456789012345678901234567890123456789012345678901234")
+
+		_, err := NewConfig()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid contract address")
+	})
+
+	// Test case 4: Test with invalid private key
+	t.Run("with invalid private key", func(t *testing.T) {
+		t.Setenv("PRECISION", "2")
+		t.Setenv("TOKENS", "bitcoin,ethereum")
+		t.Setenv("URL", "http://test.com")
+		t.Setenv("ALCHEMY", "http://alchemy.test")
+		t.Setenv("CONTRACT", "0x123456789012345678901234567890123456789a")
+		t.Setenv("PRIVATEKEY", "invalid-key")
+
+		_, err := NewConfig()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid private key format")
+	})
+
+	// Test case 5: Test with empty token list
+	t.Run("with empty token list", func(t *testing.T) {
+		t.Setenv("PRECISION", "2")
 		t.Setenv("TOKENS", "")
-		t.Setenv("URL", "")
-		t.Setenv("ALCHEMY", "")
-		t.Setenv("CONTRACT", "")
-		t.Setenv("PRIVATEKEY", "")
+		t.Setenv("URL", "http://test.com")
+		t.Setenv("ALCHEMY", "http://alchemy.test")
+		t.Setenv("CONTRACT", "0x123456789012345678901234567890123456789a")
+		t.Setenv("PRIVATEKEY", "1234567890123456789012345678901234567890123456789012345678901234")
+
+		_, err := NewConfig()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "no tokens specified")
+	})
+}
+
+func TestConfigOptions(t *testing.T) {
+	// Test WithPrecision option
+	t.Run("with precision", func(t *testing.T) {
+		t.Setenv("TOKENS", "bitcoin,ethereum")
+		t.Setenv("URL", "http://test.com")
+		t.Setenv("ALCHEMY", "http://alchemy.test")
+		t.Setenv("CONTRACT", "0x123456789012345678901234567890123456789a")
+		t.Setenv("PRIVATEKEY", "1234567890123456789012345678901234567890123456789012345678901234")
+
+		cfg, err := NewConfig(WithPrecision("8"))
+		assert.NoError(t, err)
+		assert.Equal(t, "8", cfg.Precision)
+	})
+
+	// Test TokenList helper
+	t.Run("token list helper", func(t *testing.T) {
+		t.Setenv("PRECISION", "2")
+		t.Setenv("TOKENS", "bitcoin,ethereum")
+		t.Setenv("URL", "http://test.com")
+		t.Setenv("ALCHEMY", "http://alchemy.test")
+		t.Setenv("CONTRACT", "0x123456789012345678901234567890123456789a")
+		t.Setenv("PRIVATEKEY", "1234567890123456789012345678901234567890123456789012345678901234")
 
 		cfg, err := NewConfig()
-		assert.NoError(t, err) // Should not error even with missing vars
-		assert.NotNil(t, cfg)  // Should return empty config
+		assert.NoError(t, err)
+		tokens := cfg.TokenList()
+		assert.Equal(t, []string{"bitcoin", "ethereum"}, tokens)
 	})
 }

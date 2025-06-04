@@ -40,13 +40,19 @@ func TestGetPrices(t *testing.T) {
 		// Verify query parameters
 		query := r.URL.Query()
 		assert.Equal(t, "bitcoin,ethereum", query.Get("ids"))
-		assert.Equal(t, "usd", query.Get("vs_currencies"))
+		assert.Equal(t, "usd,eur", query.Get("vs_currencies"))
 		assert.Equal(t, "2", query.Get("precision"))
 
 		// Return mock response
 		response := map[string]CurrencyPrice{
-			"bitcoin":  {USD: 30000.00},
-			"ethereum": {USD: 2000.00},
+			"bitcoin": {
+				"usd": 30000.00,
+				"eur": 28000.00,
+			},
+			"ethereum": {
+				"usd": 2000.00,
+				"eur": 1850.00,
+			},
 		}
 		json.NewEncoder(w).Encode(response)
 	}))
@@ -62,17 +68,26 @@ func TestGetPrices(t *testing.T) {
 	prices, err := gecko.getPrices()
 
 	assert.NoError(t, err)
-	assert.Len(t, prices, 2)
+	assert.Len(t, prices, 4) // 2 coins * 2 currencies
+
+	// Create map for easy lookup
+	priceMap := make(map[string]map[string]float64)
+	for _, price := range prices {
+		if _, exists := priceMap[price.Symbol]; !exists {
+			priceMap[price.Symbol] = make(map[string]float64)
+		}
+		priceMap[price.Symbol][price.Type] = price.Amount
+	}
 
 	// Verify prices
-	expectedPrices := map[string]float64{
-		"bitcoin":  30000.00,
-		"ethereum": 2000.00,
-	}
+	assert.Equal(t, 30000.00, priceMap["bitcoin"]["USD"])
+	assert.Equal(t, 28000.00, priceMap["bitcoin"]["EUR"])
+	assert.Equal(t, 2000.00, priceMap["ethereum"]["USD"])
+	assert.Equal(t, 1850.00, priceMap["ethereum"]["EUR"])
 
-	for _, price := range prices {
-		assert.Equal(t, expectedPrices[price.Symbol], price.USD)
-	}
+	// Verify USD prices are stored in apiPrices
+	assert.Equal(t, 30000.00, gecko.apiPrices["bitcoin"])
+	assert.Equal(t, 2000.00, gecko.apiPrices["ethereum"])
 }
 
 func TestApiPrices(t *testing.T) {
@@ -93,7 +108,10 @@ func TestUpdatePriceFromApi(t *testing.T) {
 	// Create a test server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		response := map[string]CurrencyPrice{
-			"bitcoin": {USD: 30000.00},
+			"bitcoin": {
+				"usd": 30000.00,
+				"eur": 28000.00,
+			},
 		}
 		json.NewEncoder(w).Encode(response)
 	}))
@@ -116,9 +134,22 @@ func TestUpdatePriceFromApi(t *testing.T) {
 	// Wait for the first price update
 	select {
 	case prices := <-priceCh:
-		assert.Len(t, prices, 1)
-		assert.Equal(t, "bitcoin", prices[0].Symbol)
-		assert.Equal(t, 30000.00, prices[0].USD)
+		assert.Len(t, prices, 2) // Both USD and EUR
+		foundUSD := false
+		foundEUR := false
+		for _, price := range prices {
+			assert.Equal(t, "bitcoin", price.Symbol)
+			switch price.Type {
+			case "USD":
+				assert.Equal(t, 30000.00, price.Amount)
+				foundUSD = true
+			case "EUR":
+				assert.Equal(t, 28000.00, price.Amount)
+				foundEUR = true
+			}
+		}
+		assert.True(t, foundUSD, "USD price not found")
+		assert.True(t, foundEUR, "EUR price not found")
 	case <-time.After(2 * time.Second):
 		t.Fatal("Timeout waiting for price update")
 	}

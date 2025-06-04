@@ -2,12 +2,15 @@
 package apis
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/sljivkov/dectek/config"
@@ -22,9 +25,7 @@ type CoinGecko struct {
 }
 
 // CurrencyPrice represents the price response structure from CoinGecko
-type CurrencyPrice struct {
-	USD float64 `json:"usd"`
-}
+type CurrencyPrice map[string]float64 // currency type to amount mapping
 
 // NewCoinGecko creates a new CoinGecko price feed instance
 func NewCoinGecko(cfg config.Config) *CoinGecko {
@@ -48,7 +49,7 @@ func NewCoinGecko(cfg config.Config) *CoinGecko {
 func (g *CoinGecko) getPrices() ([]domain.Price, error) {
 	params := url.Values{}
 	params.Add("ids", g.cfg.Tokens)
-	params.Add("vs_currencies", "usd")
+	params.Add("vs_currencies", "usd,eur") // Request multiple currencies
 	params.Add("precision", g.cfg.Precision)
 	params.Add("include_last_update_at", "true")
 
@@ -74,19 +75,35 @@ func (g *CoinGecko) getPrices() ([]domain.Price, error) {
 		return nil, fmt.Errorf("API returned non-200 status: %d", resp.StatusCode)
 	}
 
+	var reader io.ReadCloser = resp.Body
+	if resp.Header.Get("Content-Encoding") == "gzip" {
+		var err error
+		reader, err = gzip.NewReader(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create gzip reader: %w", err)
+		}
+		defer reader.Close()
+	}
+
 	var raw map[string]CurrencyPrice
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+	if err := json.NewDecoder(reader).Decode(&raw); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	prices := make([]domain.Price, 0, len(raw))
+	prices := make([]domain.Price, 0)
 
-	for symbol, data := range raw {
-		g.apiPrices[symbol] = data.USD
-		prices = append(prices, domain.Price{
-			Symbol: symbol,
-			USD:    data.USD,
-		})
+	for symbol, currencies := range raw {
+		for currencyType, amount := range currencies {
+			prices = append(prices, domain.Price{
+				Symbol: symbol,
+				Amount: amount,
+				Type:   strings.ToUpper(currencyType),
+			})
+		}
+		// Store USD price for backward compatibility
+		if usdPrice, ok := currencies["usd"]; ok {
+			g.apiPrices[symbol] = usdPrice
+		}
 	}
 
 	return prices, nil

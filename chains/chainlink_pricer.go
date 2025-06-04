@@ -31,10 +31,10 @@ func NewRealChainlinkPricer(client *ethclient.Client) (*RealChainlinkPricer, err
 		return nil, fmt.Errorf("failed to parse Chainlink ABI: %w", err)
 	}
 
-	// Initialize with default Sepolia addresses
+	// Initialize with Sepolia network price feed addresses
 	addresses := map[string]string{
-		"bitcoin":  "0xA39434A63A52E749F02807ae27335515BA4b07F7",
-		"ethereum": "0xD4a33860578De61DBAbDc8BFdb98FD742fA7028e",
+		"bitcoin":  "0x1b44F3514812d835EB1BDB0acB33d3fA3351Ee43", // BTC/USD price feed on Sepolia
+		"ethereum": "0x694AA1769357215DE4FAC081bf1f309aDC325306", // ETH/USD price feed on Sepolia
 	}
 
 	return &RealChainlinkPricer{

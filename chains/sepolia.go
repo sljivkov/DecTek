@@ -92,7 +92,9 @@ func (s *SepoliaPriceFeed) ListenOnChainPriceUpdate(ctx context.Context, out cha
 		Context: ctx,
 	}, logs)
 	if err != nil {
-		log.Fatalf("Failed to subscribe to event: %v", err)
+		log.Printf("⚠️ Failed to subscribe to event: %v", err)
+
+		return
 	}
 
 	log.Println("📡 Listening for PriceChanged events...")
@@ -120,7 +122,8 @@ func (s *SepoliaPriceFeed) ListenOnChainPriceUpdate(ctx context.Context, out cha
 
 				out <- domain.Price{
 					Symbol: event.Symbol,
-					USD:    priceFloat,
+					Amount: priceFloat,
+					Type:   "USD",
 				}
 			case <-ctx.Done():
 				log.Println("🛑 Context canceled, stopping listener")
@@ -134,7 +137,7 @@ func (s *SepoliaPriceFeed) ListenOnChainPriceUpdate(ctx context.Context, out cha
 func (s *SepoliaPriceFeed) getChainlinkBounds(symbol string, chainlinkPrice int64) (int64, int64) {
 	s.boundCacheMu.RLock()
 	if entry, exists := s.boundCache[symbol]; exists {
-		if time.Since(entry.timestamp) < 5*time.Minute {
+		if time.Since(entry.timestamp) < 2*time.Minute {
 			s.boundCacheMu.RUnlock()
 
 			return entry.up, entry.down
@@ -214,41 +217,46 @@ func (s *SepoliaPriceFeed) WritePricesToChain(ctx context.Context, in <-chan []d
 		case prices := <-in:
 			log.Printf("📨 Incoming prices to chain writer: %+v\n", prices)
 
-			// Pre-allocate slice with capacity matching input
-			validPrices := make([]domain.Price, 0, len(prices))
-
+			// Group prices by symbol and filter for USD
+			usdPrices := make(map[string]float64)
 			for _, price := range prices {
-				symbol := strings.ToLower(price.Symbol)
+				if strings.EqualFold(price.Type, "USD") {
+					usdPrices[strings.ToLower(price.Symbol)] = price.Amount
+				}
+			}
 
-				newPrice := int64(price.USD * 100)
+			// Pre-allocate slice with capacity matching input
+			validPrices := make([]domain.Price, 0, len(usdPrices))
+
+			for symbol, amount := range usdPrices {
+				newPrice := int64(amount * 100)
 
 				shouldWrite, err := s.validatePrice(symbol, newPrice)
 				if err != nil {
 					log.Printf("⚠️ %v", err)
-
 					continue
 				}
 
 				if shouldWrite {
-					log.Printf("✅ Price validated for %s: %.2f", symbol, price.USD)
-
-					validPrices = append(validPrices, price)
+					log.Printf("✅ Price validated for %s: %.2f", symbol, amount)
+					validPrices = append(validPrices, domain.Price{
+						Symbol: symbol,
+						Amount: amount,
+						Type:   "USD",
+					})
 				} else {
-					log.Printf("⛔ %s price invalid for write: %.2f", symbol, price.USD)
+					log.Printf("⛔ %s price invalid for write: %.2f", symbol, amount)
 				}
 			}
 
 			// Batch write valid prices in a single transaction if possible
 			for _, price := range validPrices {
-				symbol := strings.ToLower(price.Symbol)
-
-				if err := s.writeToChain(ctx, symbol, price.USD); err != nil {
+				if err := s.writeToChain(ctx, price.Symbol, price.Amount); err != nil {
 					log.Printf("❌ %v", err)
-
 					continue
 				}
 
-				log.Printf("📝 Successfully wrote %s price: %.2f", symbol, price.USD)
+				log.Printf("📝 Successfully wrote %s price: %.2f", price.Symbol, price.Amount)
 			}
 
 		case <-ctx.Done():

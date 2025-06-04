@@ -10,7 +10,8 @@ import (
 // Price represents a token's price data
 type Price struct {
 	Symbol string  // Token symbol (e.g., "BTC", "ETH")
-	USD    float64 // Price in USD
+	Amount float64 // Amount of the token
+	Type   string  // Type of currency (e.g., "USD", "EUR")
 }
 
 // PriceProvider defines the interface for services that provide price updates

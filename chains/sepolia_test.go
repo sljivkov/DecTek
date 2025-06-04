@@ -93,7 +93,8 @@ func TestListenOnChainPriceUpdate(t *testing.T) {
 	select {
 	case price := <-out:
 		assert.Equal(t, "bitcoin", price.Symbol)
-		assert.Equal(t, 30000.00, price.USD)
+		assert.Equal(t, 30000.00, price.Amount)
+		assert.Equal(t, "USD", price.Type)
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for price update")
 	}
@@ -327,7 +328,7 @@ func TestWritePricesToChain(t *testing.T) {
 
 	// Send test prices
 	testPrices := []domain.Price{
-		{Symbol: "bitcoin", USD: 31000.00}, // Valid price
+		{Symbol: "bitcoin", Amount: 31000.00, Type: "USD"}, // Valid price
 	}
 	in <- testPrices
 
